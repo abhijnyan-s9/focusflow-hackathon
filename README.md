@@ -6,6 +6,24 @@ It also integrates with a Chrome extension **FocusGuard** to block distracting w
 
 ---
 
+## 🎥 Project Demo Video
+
+A complete walkthrough of **FocusFlow** — including the dashboard, focus tracking, Pomodoro timer, webcam-based attention detection, and Flow Mode distraction blocker — is available in the video below:
+
+👉 **[Click here to watch the full demo (Google Drive)](https://drive.google.com/file/d/1w8A1p-Kgaz2jYOClsG4KDaHXQn7e03ID/view?usp=sharing)**
+
+This video demonstrates:
+
+- Starting a focus session  
+- Real-time face tracking & focus score  
+- Dynamic Orb visualization  
+- Pomodoro-style timer  
+- Focus drop notifications  
+- Flow Mode extension auto-blocking distracting websites  
+- Session summary and analytics  
+
+Make sure to watch it for a complete understanding of how FocusFlow works.
+
 ## ✨ Features
 
 ### 🎯 Focus Dashboard (Frontend)
