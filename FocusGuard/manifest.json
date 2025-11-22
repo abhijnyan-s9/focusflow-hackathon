@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "FocusGuard (Flow-controlled)",
+  "version": "1.0",
+  "description": "Blocks distracting sites while Flow Mode is ON.",
+  "permissions": ["tabs", "storage", "notifications"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+ "content_scripts": [
+  {
+    "matches": [
+      "http://127.0.0.1:5500/frontend/*"
+    ],
+    "js": ["content.js"],
+    "run_at": "document_start"
+  }
+]
+
+}

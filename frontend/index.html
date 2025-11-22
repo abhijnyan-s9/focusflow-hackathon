@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Focus Dashboard</title>
+
+  <!-- Professional font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="dashboard">
+    <!-- ========= SIDEBAR ========= -->
+    <aside class="sidebar">
+      <div class="icon home active" title="Home">
+        <svg viewBox="0 0 24 24">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+        </svg>
+      </div>
+      <div class="icon chart" title="Chart">
+        <svg viewBox="0 0 24 24">
+          <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+        </svg>
+      </div>
+      <div class="icon timer" title="Timer">
+        <svg viewBox="0 0 24 24">
+          <path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+        </svg>
+      </div>
+      <div class="icon settings" title="Settings">
+        <svg viewBox="0 0 24 24">
+          <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+        </svg>
+      </div>
+    </aside>
+
+    <!-- ========= MAIN AREA ========= -->
+    <main class="main-area">
+      <header class="top-header">
+        <h1>Focus Dashboard</h1>
+        <div class="user-profile">
+          <div class="avatar">U</div>
+          <span>User</span>
+        </div>
+      </header>
+
+      <!-- Stats Grid -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Focus Sessions</div>
+          <div class="stat-value">12</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: 75%"></div>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg. Focus Score</div>
+          <div class="stat-value">78%</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: 78%"></div>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Focus Time</div>
+          <div class="stat-value">4h 32m</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: 60%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="top-section">
+        <!-- Focus Score Box -->
+        <div class="box chart-box">
+          <h3>Focus Score</h3>
+          <canvas id="scoreChart"></canvas>
+        </div>
+
+        <!-- Timer Box -->
+        <div class="box timer-box">
+          <h3>Session Timer</h3>
+
+          <div class="time-setting">
+            <label for="pomoInput">Session (minutes):</label>
+            <input
+              id="pomoInput"
+              type="number"
+              min="1"
+              max="180"
+              value="25"
+            />
+          </div>
+
+          <div class="timer-display" id="timer">25:00</div>
+
+          <div class="timer-buttons">
+            <button id="startBtn" class="btn start">Start</button>
+            <button id="stopBtn" class="btn stop" disabled>Stop</button>
+            <button id="resetBtn" class="btn reset">Reset</button>
+          </div>
+          
+          <div class="toggle-container">
+            <span>Auto-start next session</span>
+            <label class="toggle">
+              <input type="checkbox" id="autoToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Orb / Focus Indicator -->
+        <div class="box emotion-box">
+          <h3>Focus Indicator</h3>
+          <div class="orb-wrap">
+            <div id="orb" class="orb">
+              <span id="orbPercent">0%</span>
+            </div>
+          </div>
+          <p class="small muted">
+            Higher % ≈ more "open eyes" → more focus
+          </p>
+        </div>
+      </section>
+
+      <!-- Session Details -->
+      <section class="session-details box">
+        <h2>Session Details</h2>
+        <p><strong>Status:</strong> <span id="currentState">IDLE</span></p>
+        <p><strong>Current Score:</strong> <span id="currentScore">0.00</span></p>
+        <p><strong>Samples recorded:</strong> <span id="sampleCount">0</span></p>
+      </section>
+
+      <!-- Webcam Section -->
+      <section class="webcam-section box">
+        <h2>Webcam Preview</h2>
+        <video id="webcam" autoplay playsinline muted></video>
+        <p id="webcamStatus" class="status-msg">Waiting to start session…</p>
+        <p id="permissionHelp" class="status-error" style="display:none;">
+          Camera permission is blocked. Click the lock 🔒 in the address bar → Site settings → Allow Camera, then reload.
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <!-- Libraries: MediaPipe + Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Main logic -->
+  <script src="script.js"></script>
+</body>
+</html>
