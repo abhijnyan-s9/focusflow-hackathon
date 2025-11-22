@@ -1,4 +1,4 @@
-// script.js - Final version with reset + FlowMode messages + upgraded orb
+// script.js - Final cleaned version
 
 /* ========== DOM refs ========== */
 const pomoInput = document.getElementById("pomoInput");
@@ -24,6 +24,28 @@ const sessionDetailsBox = document.querySelector(".session-details");
 function log(...args) { console.log("[FT]", ...args); }
 function err(...args) { console.error("[FT]", ...args); }
 
+function ensureNotificationPermission() {
+  if (!("Notification" in window)) return Promise.reject(new Error("Notifications not supported"));
+  if (Notification.permission === "granted") return Promise.resolve();
+  if (Notification.permission === "denied") return Promise.reject(new Error("Notifications denied"));
+  return Notification.requestPermission().then(result => {
+    if (result === "granted") return;
+    throw new Error("Notifications denied");
+  });
+}
+
+function showBrowserNotification(title, text) {
+  try {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body: text, silent: false });
+    } else {
+      ensureNotificationPermission()
+        .then(() => new Notification(title, { body: text, silent: false }))
+        .catch(()=>{});
+    }
+  } catch (e) { console.warn("notif fail", e); }
+}
+
 /* ========== State ========== */
 let POMODORO_DURATION = 25 * 60;
 let remainingSeconds = POMODORO_DURATION;
@@ -37,6 +59,11 @@ let localStream = null;
 let focusData = [];
 let chart = null;
 
+let lastFocusNotificationTs = 0;
+const FOCUS_NOTIFY_COOLDOWN_MS = 30000;
+let consecutiveLowCount = 0;
+const CONSECUTIVE_LOW_THRESHOLD = 10;
+
 /* ========== Timer helpers ========== */
 function formatMMSS(sec) {
   const mm = String(Math.floor(sec / 60)).padStart(2, "0");
@@ -48,7 +75,6 @@ function tickTimer() {
   remainingSeconds--;
   if (remainingSeconds < 0) remainingSeconds = 0;
   if (timerEl) timerEl.innerText = formatMMSS(remainingSeconds);
-
   if (remainingSeconds <= 0) {
     log("Timer finished. Ending session.");
     endSession(true);
@@ -66,18 +92,18 @@ function initChart() {
     type: "line",
     data: {
       labels: [],
-      datasets: [
-        {
-          label: "Focus Score",
-          data: [],
-          tension: 0.25
-        }
-      ]
+      datasets: [{
+        label: "Focus Score",
+        data: [],
+        tension: 0.25,
+        fill: false
+      }]
     },
     options: {
       responsive: true,
       animation: false,
-      scales: { y: { min: 0, max: 1 } }
+      scales: { y: { min: 0, max: 1 } },
+      plugins: { legend: { display: false } }
     }
   });
 }
@@ -93,42 +119,50 @@ function addDataToChart(score) {
   chart.update("none");
 }
 
-/* ========== Camera permission ========== */
+/* ========== Camera check & permission ========== */
 async function ensureCameraPermission() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw new Error("Browser does not support getUserMedia.");
   }
 
   try {
-    if (navigator.permissions && navigator.permissions.query) {
-      try {
-        const status = await navigator.permissions.query({ name: "camera" });
-        log("Camera permission state:", status.state);
-        if (status.state === "denied") {
-          if (permissionHelpEl) permissionHelpEl.style.display = "block";
-          throw new Error("Camera permission is blocked. Allow via site settings.");
-        }
-      } catch (e) {
-        log("permissions.query(camera) not supported or failed:", e);
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
-    });
-    stream.getTracks().forEach((t) => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    stream.getTracks().forEach(t => t.stop());
     if (webcamStatusEl) webcamStatusEl.textContent = "Camera permission granted.";
     if (permissionHelpEl) permissionHelpEl.style.display = "none";
+    log("getUserMedia: success");
+    return;
   } catch (errPerm) {
-    err("getUserMedia failed:", errPerm);
-    if (webcamStatusEl) webcamStatusEl.textContent =
-      "Unable to access camera. Check permissions.";
-    if (permissionHelpEl) permissionHelpEl.style.display = "block";
+    err("getUserMedia failed — name:", errPerm.name, "message:", errPerm.message, errPerm);
+    const name = errPerm && errPerm.name ? errPerm.name : "UnknownError";
+
+    if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+      if (webcamStatusEl) webcamStatusEl.textContent = "Camera access was denied by the browser.";
+      if (permissionHelpEl) {
+        permissionHelpEl.style.display = "block";
+        permissionHelpEl.innerText =
+          "Camera permission denied. Click the lock 🔒 in the address bar → Site settings → Allow Camera, then reload. If already 'Allow', try removing the site and reloading.";
+      }
+    } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      if (webcamStatusEl) webcamStatusEl.textContent = "No camera found.";
+      if (permissionHelpEl) {
+        permissionHelpEl.style.display = "block";
+        permissionHelpEl.innerText = "No camera detected. Connect a webcam and retry.";
+      }
+    } else if (name === "NotReadableError" || name === "TrackStartError") {
+      if (webcamStatusEl) webcamStatusEl.textContent = "Camera is busy or blocked by another app.";
+      if (permissionHelpEl) {
+        permissionHelpEl.style.display = "block";
+        permissionHelpEl.innerText =
+          "Camera appears in use by another application (Zoom/OBS/etc.). Close them and retry.";
+      }
+    } else {
+      if (webcamStatusEl) webcamStatusEl.textContent = "Unable to access camera.";
+      if (permissionHelpEl) {
+        permissionHelpEl.style.display = "block";
+        permissionHelpEl.innerText = `Camera error: ${name}. See console for details.`;
+      }
+    }
     throw errPerm;
   }
 }
@@ -140,18 +174,14 @@ async function startCameraAndFaceMesh() {
   try {
     if (window.FaceMesh && window.FaceMesh.FaceMesh) {
       faceMesh = new window.FaceMesh.FaceMesh({
-        locateFile: (file) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       });
     } else if (window.FaceMesh) {
       faceMesh = new window.FaceMesh({
-        locateFile: (file) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       });
     } else {
-      throw new Error(
-        "FaceMesh global not found. Make sure mediapipe face_mesh script is included."
-      );
+      throw new Error("FaceMesh global not found. Include mediapipe face_mesh script.");
     }
   } catch (e) {
     throw new Error("Failed to create FaceMesh: " + e.message);
@@ -167,14 +197,9 @@ async function startCameraAndFaceMesh() {
 
   try {
     if (typeof window.Camera !== "undefined") {
-      log("Using window.Camera helper.");
       cameraHelper = new window.Camera(videoEl, {
         onFrame: async () => {
-          try {
-            await faceMesh.send({ image: videoEl });
-          } catch (e) {
-            err("faceMesh.send err:", e);
-          }
+          try { await faceMesh.send({ image: videoEl }); } catch (e) { err("faceMesh.send err", e); }
         },
         width: 640,
         height: 480
@@ -184,14 +209,9 @@ async function startCameraAndFaceMesh() {
       return;
     }
     if (window.CameraUtils && window.CameraUtils.Camera) {
-      log("Using CameraUtils.Camera helper.");
       cameraHelper = new window.CameraUtils.Camera(videoEl, {
         onFrame: async () => {
-          try {
-            await faceMesh.send({ image: videoEl });
-          } catch (e) {
-            err("faceMesh.send err:", e);
-          }
+          try { await faceMesh.send({ image: videoEl }); } catch (e) { err("faceMesh.send err", e); }
         },
         width: 640,
         height: 480
@@ -202,10 +222,6 @@ async function startCameraAndFaceMesh() {
     }
   } catch (e) {
     log("Camera helper failed, falling back to getUserMedia", e);
-  }
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    throw new Error("getUserMedia not supported.");
   }
 
   localStream = await navigator.mediaDevices.getUserMedia({
@@ -219,9 +235,7 @@ async function startCameraAndFaceMesh() {
   (function frameLoop() {
     if (!started || !faceMesh) return;
     try {
-      faceMesh.send({ image: videoEl }).catch((e) =>
-        err("faceMesh.send inner err", e)
-      );
+      faceMesh.send({ image: videoEl }).catch(e => err("faceMesh.send inner err", e));
     } catch (e) {
       err("faceMesh.send top-level err", e);
     }
@@ -230,12 +244,17 @@ async function startCameraAndFaceMesh() {
 }
 
 /* ========== Focus calculation (EAR) ========== */
+// Low-focus transition tracking
+let wasLow = false;                      // Was user low in the previous frame?
+const LOW_THRESHOLD = 0.50;              // Trigger <50%
+const RECOVER_THRESHOLD = 0.57;          // Require >57% to reset (avoid jitter)
+const TRANSITION_COOLDOWN_MS = 5000;     // 5s cooldown between notifications
+let lastTransitionNotifTs = 0;
+
 function onResults(results) {
-  if (
-    !results ||
-    !results.multiFaceLandmarks ||
-    results.multiFaceLandmarks.length === 0
-  ) {
+  if (!results || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+    // no face this frame
+    consecutiveLowCount = 0;
     return;
   }
 
@@ -260,13 +279,12 @@ function onResults(results) {
   const focus = earNorm;
   const pct = Math.round(focus * 100);
 
+  // ---- UI updates (orb + numbers) ----
   if (orbPercentEl) orbPercentEl.innerText = `${pct}%`;
-
   if (orbEl) {
-    const angle = pct * 3.6; // 0–100 -> 0–360deg
+    const angle = pct * 3.6;
     orbEl.style.transform = `scale(${0.9 + focus * 0.3})`;
     orbEl.style.setProperty("--focus-angle", angle + "deg");
-
     const glow = 0.3 + focus * 0.5;
     orbEl.style.boxShadow = `
       0 0 0 1px rgba(148,163,184,0.4),
@@ -278,11 +296,64 @@ function onResults(results) {
   if (currentScoreEl) currentScoreEl.innerText = focus.toFixed(2);
   if (currentStateEl) currentStateEl.innerText = started ? "RUNNING" : "IDLE";
 
-  if (started) {
-    focusData.push(focus);
-    if (sampleCountEl) sampleCountEl.innerText = focusData.length;
-    addDataToChart(focus);
+  // ---- only track focus while session is running ----
+  if (!started) return;
+
+  focusData.push(focus);
+  if (sampleCountEl) sampleCountEl.innerText = focusData.length;
+  addDataToChart(focus);
+
+  // ---------- ENHANCED LOW-FOCUS TRACKING WITH TRANSITIONS ----------
+  const now = Date.now();
+
+  if (focus < LOW_THRESHOLD) {
+    consecutiveLowCount++;
+
+    // Only notify when transitioning from high → low (and cooldown passed)
+    const canNotify = (now - lastTransitionNotifTs) > TRANSITION_COOLDOWN_MS;
+
+    if (!wasLow && canNotify) {
+      wasLow = true;
+      lastTransitionNotifTs = now;
+
+      showBrowserNotification(
+        "FocusGuard",
+        `Focus dropped below ${Math.round(LOW_THRESHOLD * 100)}% — pay attention.`
+      );
+    }
+
+  } else {
+    // Reset consecutive lows whenever above the low threshold
+    consecutiveLowCount = 0;
+
+    // Consider fully "recovered" only when focus goes clearly above RECOVER_THRESHOLD
+    if (focus >= RECOVER_THRESHOLD) {
+      wasLow = false;
+    }
   }
+
+  // Stronger suggestion if user stays unfocused for many frames
+  if (consecutiveLowCount >= CONSECUTIVE_LOW_THRESHOLD) {
+    showTransientSuggestion(
+      "Your focus has dropped repeatedly — try adjusting posture, lighting, or take a 1–2 minute break."
+    );
+    consecutiveLowCount = 0;
+  }
+}
+
+/* transient suggestion banner */
+let suggestionTimeout = null;
+function showTransientSuggestion(text) {
+  if (!sessionDetailsBox) return;
+  const prev = document.getElementById("transientSuggestion");
+  if (prev) prev.remove();
+  const p = document.createElement("div");
+  p.id = "transientSuggestion";
+  p.style.cssText = "margin-top:12px;padding:10px;background:linear-gradient(90deg,#071033,#0b1226);border:1px solid rgba(37,99,235,0.12);border-radius:8px;color:#dbeafe;";
+  p.innerText = text;
+  sessionDetailsBox.appendChild(p);
+  if (suggestionTimeout) clearTimeout(suggestionTimeout);
+  suggestionTimeout = setTimeout(() => { p.remove(); suggestionTimeout = null; }, 8000);
 }
 
 /* ========== Start ========== */
@@ -290,11 +361,8 @@ startBtn.onclick = async () => {
   if (started) return;
   started = true;
 
-  // Tell extension: Flow Mode ON
-  window.postMessage(
-    { from: "focus-app", type: "FLOW_MODE", enabled: true },
-    "*"
-  );
+  window.postMessage({ from: "focus-app", type: "FLOW_MODE", enabled: true }, "*");
+  ensureNotificationPermission().catch(()=>{});
 
   let userMinutes = parseInt(pomoInput.value, 10);
   if (isNaN(userMinutes) || userMinutes <= 0) userMinutes = 25;
@@ -308,6 +376,7 @@ startBtn.onclick = async () => {
   startBtn.disabled = true;
   stopBtn.disabled = false;
   focusData = [];
+  consecutiveLowCount = 0;
 
   if (timerEl) timerEl.innerText = formatMMSS(remainingSeconds);
   if (sessionDetailsBox) sessionDetailsBox.style.display = "none";
@@ -324,21 +393,13 @@ startBtn.onclick = async () => {
     log("Camera & FaceMesh started.");
   } catch (e) {
     err("Camera/FaceMesh start failed:", e);
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     started = false;
     startBtn.disabled = false;
     stopBtn.disabled = true;
     if (currentStateEl) currentStateEl.innerText = "IDLE";
-    if (webcamStatusEl)
-      webcamStatusEl.textContent = "Camera error. Check permissions.";
-
-    window.postMessage(
-      { from: "focus-app", type: "FLOW_MODE", enabled: false },
-      "*"
-    );
+    if (webcamStatusEl) webcamStatusEl.textContent = "Camera error. Check permissions.";
+    window.postMessage({ from: "focus-app", type: "FLOW_MODE", enabled: false }, "*");
   }
 };
 
@@ -346,21 +407,14 @@ startBtn.onclick = async () => {
 stopBtn.onclick = () => endSession(false);
 
 function endSession(finishedNaturally) {
-  // Tell extension: Flow Mode OFF
-  window.postMessage(
-    { from: "focus-app", type: "FLOW_MODE", enabled: false },
-    "*"
-  );
+  window.postMessage({ from: "focus-app", type: "FLOW_MODE", enabled: false }, "*");
 
   if (!started && !timerInterval) return;
 
   log("Ending session. finishedNaturally =", finishedNaturally);
   started = false;
 
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
 
   startBtn.disabled = false;
   stopBtn.disabled = true;
@@ -371,15 +425,11 @@ function endSession(finishedNaturally) {
     cameraHelper = null;
   }
   if (localStream) {
-    try { localStream.getTracks().forEach((t) => t.stop()); } catch (e) { log("stop tracks err", e); }
+    try { localStream.getTracks().forEach(t => t.stop()); } catch (e) { log("stop tracks err", e); }
     localStream = null;
   }
 
-  const avg =
-    focusData.length > 0
-      ? focusData.reduce((a, b) => a + b, 0) / focusData.length
-      : 0;
-
+  const avg = focusData.length > 0 ? focusData.reduce((a,b)=>a+b,0)/focusData.length : 0;
   showAnalysis(avg, finishedNaturally);
 }
 
@@ -387,17 +437,9 @@ function endSession(finishedNaturally) {
 resetBtn.onclick = () => resetSession();
 
 function resetSession() {
-  // Tell extension: Flow Mode OFF
-  window.postMessage(
-    { from: "focus-app", type: "FLOW_MODE", enabled: false },
-    "*"
-  );
+  window.postMessage({ from: "focus-app", type: "FLOW_MODE", enabled: false }, "*");
 
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   started = false;
 
   if (cameraHelper && cameraHelper.stop) {
@@ -405,7 +447,7 @@ function resetSession() {
     cameraHelper = null;
   }
   if (localStream) {
-    try { localStream.getTracks().forEach((t) => t.stop()); } catch (e) { log("stop tracks err", e); }
+    try { localStream.getTracks().forEach(t => t.stop()); } catch (e) { log("stop tracks err", e); }
     localStream = null;
   }
 
@@ -445,37 +487,43 @@ function resetSession() {
 /* ========== Analysis UI ========== */
 function showAnalysis(avg, finishedNaturally) {
   const avgPct = (avg * 100).toFixed(1);
-  const suggestion =
-    avg > 0.75
-      ? "Excellent Focus!"
-      : avg > 0.55
-      ? "Good Focus. Small improvements possible."
-      : avg > 0.4
-      ? "Some distraction. Try silencing phone or short breaks."
-      : "Low focus. Consider posture, light, and breaks.";
 
-  const statusText = finishedNaturally
-    ? "Session completed (timer finished)."
-    : "Session stopped before time ended.";
+  if (avg >= 0.995) {
+    if (sessionDetailsBox) {
+      sessionDetailsBox.style.display = "block";
+      sessionDetailsBox.innerHTML = `
+        <h2>Session Details</h2>
+        <p><strong>Status:</strong> ${finishedNaturally ? "Session completed" : "Stopped"}</p>
+        <p><strong>Average Focus:</strong> ${avgPct}%</p>
+        <p>Excellent — no suggestions. Keep it up!</p>
+        <p><strong>Samples recorded:</strong> ${focusData.length}</p>
+      `;
+    }
+    return;
+  }
+
+  let suggestion = "";
+  if (avg >= 0.75) suggestion = "Good focus — try maintaining posture and reduce small distractions.";
+  else if (avg >= 0.55) suggestion = "Moderate focus — silence notifications and clear desk for better concentration.";
+  else if (avg >= 0.40) suggestion = "Low focus — consider short breaks, better lighting, and fewer open tabs.";
+  else suggestion = "Very low focus — try a short walk, deep breaths, or adjust seating/lighting.";
 
   if (sessionDetailsBox) {
     sessionDetailsBox.style.display = "block";
     sessionDetailsBox.innerHTML = `
       <h2>Session Details</h2>
-      <p><strong>Status:</strong> ${statusText}</p>
+      <p><strong>Status:</strong> ${finishedNaturally ? "Session completed" : "Stopped"}</p>
       <p><strong>Average Focus:</strong> ${avgPct}%</p>
       <p>${suggestion}</p>
       <p><strong>Samples recorded:</strong> ${focusData.length}</p>
     `;
   } else {
-    alert(`${statusText}\nAverage Focus: ${avgPct}%\n${suggestion}`);
+    alert(`Avg Focus: ${avgPct}%\n${suggestion}`);
   }
 }
 
 /* ========== Init on load ========== */
 initChart();
-
-// Initialize timer display from input
 (() => {
   let userMinutes = parseInt(pomoInput.value, 10);
   if (isNaN(userMinutes) || userMinutes <= 0) userMinutes = 25;
